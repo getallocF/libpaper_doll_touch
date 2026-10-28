@@ -16,22 +16,21 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Extract uploaded source ZIP
-      
-      - name: Remove incompatible no-exceptions flag
-        run: |
-          set -euo pipefail
-          sed -i 's/-O2 -fno-exceptions -fno-rtti/-O2 -fno-rtti/' source/PapperDollTouch/CMakeLists.txt
-          
         run: |
           set -euo pipefail
           test -f PaperDollTouch_CloudBuild_Source.zip
           unzip -q PaperDollTouch_CloudBuild_Source.zip -d source
           test -f source/PapperDollTouch/CMakeLists.txt
 
+      - name: Remove incompatible no-exceptions flag
+        run: |
+          set -euo pipefail
+          # The preloader SDK's Logger.hpp contains try/catch, so this target must not use -fno-exceptions.
+          sed -i 's/-O2 -fno-exceptions -fno-rtti/-O2 -fno-rtti/' source/PapperDollTouch/CMakeLists.txt
+          grep -n -- '-O2' source/PapperDollTouch/CMakeLists.txt
+
       - name: Install Android SDK tools
         uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
 
       - name: Install NDK and CMake packages
         run: sdkmanager --install "ndk;27.2.12479018" "cmake;3.22.1" "build-tools;35.0.0"
