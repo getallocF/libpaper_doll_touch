@@ -16,6 +16,12 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Extract uploaded source ZIP
+      
+      - name: Remove incompatible no-exceptions flag
+        run: |
+          set -euo pipefail
+          sed -i 's/-O2 -fno-exceptions -fno-rtti/-O2 -fno-rtti/' source/PapperDollTouch/CMakeLists.txt
+          
         run: |
           set -euo pipefail
           test -f PaperDollTouch_CloudBuild_Source.zip
