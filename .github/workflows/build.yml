@@ -1,93 +1,68 @@
-
-name: Build PaperDollTouch
+name: Build PaperDollTouch Android ARM64
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [main, master]
 
 permissions:
   contents: read
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Get project files
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build clang zip unzip
+      - name: Install Android SDK tools
+        uses: android-actions/setup-android@v3
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+      - name: Install NDK and CMake packages
+        run: sdkmanager --install "ndk;27.2.12479018" "cmake;3.22.1"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v4
+      - name: Get official LeviLauncher native mod SDK
+        run: git clone --depth 1 --branch 0.2.3 https://github.com/LiteLDev/preloader-android.git sdk/preloader-android
 
-      - name: Install Android NDK
-        run: |
-          sdkmanager --install "platform-tools" "platforms;android-35" "ndk;27.2.12479018"
-          yes | sdkmanager --licenses
+      - name: Configure for Android arm64-v8a
+        run: >-
+          cmake -S . -B build/arm64-v8a -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/27.2.12479018/build/cmake/android.toolchain.cmake"
+          -DANDROID_ABI=arm64-v8a
+          -DANDROID_PLATFORM=android-28
+          -DCMAKE_BUILD_TYPE=Release
+          -DPRELOADER_SDK_DIR="$GITHUB_WORKSPACE/sdk/preloader-android"
 
-      - name: Extract uploaded source ZIP
-        run: |
-          set -euo pipefail
-          ZIP_FILE="$(find . -maxdepth 2 -type f -iname '*.zip' ! -path './.git/*' | head -n 1)"
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Source ZIP tidak ditemukan di repository."
-            exit 1
-          fi
-          mkdir -p source
-          unzip -o "$ZIP_FILE" -d source
-          find source -maxdepth 4 -type f | head -200
+      - name: Compile native library
+        run: cmake --build build/arm64-v8a --target paper_doll_touch --parallel 2
 
-      - name: Locate CMake project
-        id: project
+      - name: Package .so and .levipack
+        shell: bash
         run: |
           set -euo pipefail
-          CMAKE_FILE="$(find source -type f -name CMakeLists.txt | head -n 1)"
-          if [ -z "$CMAKE_FILE" ]; then
-            echo "ERROR: CMakeLists.txt tidak ditemukan dalam source ZIP."
-            exit 1
-          fi
-          PROJECT_DIR="$(dirname "$CMAKE_FILE")"
-          echo "project_dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
-          sed -i 's/-fno-exceptions//g' "$CMAKE_FILE"
+          mkdir -p dist/package/config
+          cp build/arm64-v8a/libpaper_doll_touch.so dist/libpaper_doll_touch.so
+          cp build/arm64-v8a/libpaper_doll_touch.so dist/package/libpaper_doll_touch.so
+          cp manifest.json dist/package/manifest.json
+          cp config/config.json dist/package/config/config.json
+          cp config/config.schema.json dist/package/config/config.schema.json
+          (cd dist/package && zip -qr ../PaperDollTouch.levipack .)
 
-      - name: Build ARM64
+      - name: Verify architecture and package layout
+        shell: bash
         run: |
           set -euo pipefail
-          cmake -S "${{ steps.project.outputs.project_dir }}" -B build \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-26
-          cmake --build build --parallel 2
+          file dist/libpaper_doll_touch.so
+          readelf -h dist/libpaper_doll_touch.so | tee dist/readelf-header.txt
+          readelf -h dist/libpaper_doll_touch.so | grep -q 'AArch64'
+          unzip -l dist/PaperDollTouch.levipack | tee dist/package-list.txt
+          unzip -l dist/PaperDollTouch.levipack | grep -q 'manifest.json'
+          unzip -l dist/PaperDollTouch.levipack | grep -q 'libpaper_doll_touch.so'
+          echo 'WARNING: safe diagnostic build only. Interactive behavior is not verified while verifiedSignaturesReady=false.' | tee dist/IMPORTANT.txt
 
-      - name: Collect build outputs
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          find build source -type f \( -name '*.so' -o -name '*.levipack' \) -exec cp -v {} dist/ \;
-          if ! find dist -type f | grep -q .; then
-            echo "ERROR: Tidak ada file .so atau .levipack yang dihasilkan."
-            exit 1
-          fi
-          cd dist
-          zip -r ../PaperDollTouch-ARM64.zip .
-
-      - name: Upload build artifacts
+      - name: Upload build results
         uses: actions/upload-artifact@v4
         with:
-          name: PaperDollTouch-ARM64
-          path: PaperDollTouch-ARM64.zip
+          name: PaperDollTouch-Android-arm64v8a
+          path: dist/*
           if-no-files-found: error
