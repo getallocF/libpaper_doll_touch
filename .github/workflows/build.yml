@@ -1,0 +1,73 @@
+name: Build PaperDollTouch Android ARM64
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get repository files
+        uses: actions/checkout@v4
+
+      - name: Extract uploaded source ZIP
+        run: |
+          set -euo pipefail
+          test -f PaperDollTouch_CloudBuild_Source.zip
+          unzip -q PaperDollTouch_CloudBuild_Source.zip -d source
+          test -f source/PapperDollTouch/CMakeLists.txt
+
+      - name: Install Android SDK tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK and CMake packages
+        run: sdkmanager --install "ndk;27.2.12479018" "cmake;3.22.1" "build-tools;35.0.0"
+
+      - name: Get official LeviLauncher native mod SDK
+        run: git clone --depth 1 --branch 0.2.3 https://github.com/LiteLDev/preloader-android.git source/PapperDollTouch/sdk/preloader-android
+
+      - name: Configure Android ARM64 build
+        working-directory: source/PapperDollTouch
+        run: >-
+          cmake -S . -B build/arm64-v8a -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="$ANDROID_HOME/ndk/27.2.12479018/build/cmake/android.toolchain.cmake"
+          -DANDROID_ABI=arm64-v8a
+          -DANDROID_PLATFORM=android-28
+          -DCMAKE_BUILD_TYPE=Release
+          -DPRELOADER_SDK_DIR="$GITHUB_WORKSPACE/source/PapperDollTouch/sdk/preloader-android"
+
+      - name: Compile native library
+        working-directory: source/PapperDollTouch
+        run: cmake --build build/arm64-v8a --target paper_doll_touch --parallel 2
+
+      - name: Package and verify outputs
+        working-directory: source/PapperDollTouch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/package/config
+          cp build/arm64-v8a/libpaper_doll_touch.so dist/libpaper_doll_touch.so
+          cp build/arm64-v8a/libpaper_doll_touch.so dist/package/libpaper_doll_touch.so
+          cp manifest.json dist/package/manifest.json
+          cp config/config.json dist/package/config/config.json
+          cp config/config.schema.json dist/package/config/config.schema.json
+          (cd dist/package && zip -qr ../PaperDollTouch.levipack .)
+          file dist/libpaper_doll_touch.so | tee dist/file-check.txt
+          readelf -h dist/libpaper_doll_touch.so | tee dist/readelf-header.txt
+          readelf -h dist/libpaper_doll_touch.so | grep -q 'AArch64'
+          unzip -l dist/PaperDollTouch.levipack | tee dist/package-list.txt
+          unzip -l dist/PaperDollTouch.levipack | grep -q 'manifest.json'
+          unzip -l dist/PaperDollTouch.levipack | grep -q 'libpaper_doll_touch.so'
+          echo 'WARNING: diagnostic build only; interactive paper-doll control is not verified while verifiedSignaturesReady=false.' > dist/IMPORTANT.txt
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PaperDollTouch-Android-arm64v8a
+          path: source/PapperDollTouch/dist/*
+          if-no-files-found: error
